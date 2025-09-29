@@ -277,6 +277,7 @@ ${userText}`;
 
   const data = await resp.json();
   const textOut = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+
   
 
   try {
