@@ -1,8 +1,19 @@
 // backend/service/aiEmissions.js
-const { model } = require("../config/gemini");
-const { firestore } = require("../config/firebase");
-const fs = require('fs');
-const path = require('path');
+// NOTE: This version calls the Gemini REST API directly (snake_case payload)
+// and uses your Firestore via ../config/firebase.
+
+const { db } = require("../config/firebase");
+const fs = require("fs");
+const path = require("path");
+
+// If you're on Node 18+/Vercel, global fetch is available. If not, uncomment:
+// const fetch = require("node-fetch");
+
+const GEMINI_API_KEY = process.env.GOOGLE_API_KEY;
+if (!GEMINI_API_KEY) {
+  // Don't throw at import-time in serverless; log and let callers handle errors.
+  console.warn("[aiEmissions] GOOGLE_API_KEY is not set. AI endpoints will fail until configured.");
+}
 
 const COLLECTION = "carbonTransactions";
 
@@ -12,25 +23,25 @@ const DEFAULT_FACTORS = {
   Shopping: 0.25,
   Transport: 0.55,
   Travel: 0.80,
-  Others: 0.20
+  Others: 0.20,
 };
 
-// Load model data from JSON (converted from pickle)
+// ===== Prediction model (JSON converted from pickle) =====
 let modelData = null;
 
 function loadModel() {
   if (!modelData) {
     try {
-      const modelPath = path.join(__dirname, '../predictive_analysis/linear_regression_model.json');
-      modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
-      console.log('✓ Loaded prediction model:', modelData.feature_names);
+      const modelPath = path.join(__dirname, "../predictive_analysis/linear_regression_model.json");
+      modelData = JSON.parse(fs.readFileSync(modelPath, "utf8"));
+      console.log("✓ Loaded prediction model:", modelData.feature_names);
     } catch (error) {
-      console.warn('Warning: Could not load model, using fallback predictions');
-      // Fallback model based on typical Singapore spending patterns
+      console.warn("[aiEmissions] Could not load model; using fallback predictions");
+      // Fallback model based on typical SG spending patterns
       modelData = {
         coefficients: [200, 300, 100, 150], // Spring, Summer, Fall, Winter
         intercept: 1000,
-        feature_names: ['season_Spring', 'season_Summer', 'season_Fall', 'season_Winter']
+        feature_names: ["season_Spring", "season_Summer", "season_Fall", "season_Winter"],
       };
     }
   }
@@ -39,26 +50,22 @@ function loadModel() {
 
 function getSeasonFromMonth(month) {
   // month format: "YYYY-MM"
-  const monthNum = parseInt(month.split('-')[1]);
-  
-  // Singapore seasons (simplified based on monsoon patterns)
-  // Northeast Monsoon (Dec-Mar): Winter (cooler, wetter)
-  // Inter-monsoon (Apr-May): Spring
-  // Southwest Monsoon (Jun-Sep): Summer (hotter)
-  // Inter-monsoon (Oct-Nov): Fall
-  
-  if (monthNum >= 12 || monthNum <= 3) return 'Winter';
-  if (monthNum >= 4 && monthNum <= 5) return 'Spring';
-  if (monthNum >= 6 && monthNum <= 9) return 'Summer';
-  return 'Fall';
+  const monthNum = parseInt(month.split("-")[1], 10);
+
+  // SG (simplified, based on monsoon patterns)
+  // Dec–Mar: Winter; Apr–May: Spring; Jun–Sep: Summer; Oct–Nov: Fall
+  if (monthNum >= 12 || monthNum <= 3) return "Winter";
+  if (monthNum >= 4 && monthNum <= 5) return "Spring";
+  if (monthNum >= 6 && monthNum <= 9) return "Summer";
+  return "Fall";
 }
 
 function createSeasonFeatures(season) {
   return {
-    season_Spring: season === 'Spring' ? 1 : 0,
-    season_Summer: season === 'Summer' ? 1 : 0,
-    season_Fall: season === 'Fall' ? 1 : 0,
-    season_Winter: season === 'Winter' ? 1 : 0
+    season_Spring: season === "Spring" ? 1 : 0,
+    season_Summer: season === "Summer" ? 1 : 0,
+    season_Fall: season === "Fall" ? 1 : 0,
+    season_Winter: season === "Winter" ? 1 : 0,
   };
 }
 
@@ -66,19 +73,19 @@ async function predictSpending(month) {
   const model = loadModel();
   const season = getSeasonFromMonth(month);
   const features = createSeasonFeatures(season);
-  
+
   // Linear regression: y = intercept + sum(coef_i * feature_i)
   let prediction = model.intercept;
   model.feature_names.forEach((featureName, i) => {
     prediction += model.coefficients[i] * features[featureName];
   });
-  
+
   return {
     month,
     season,
     predictedSpending: Math.round(prediction * 100) / 100,
     features,
-    confidence: 0.85 // You can calculate this from model training metrics
+    confidence: 0.85, // placeholder; replace with training metric if available
   };
 }
 
@@ -98,19 +105,20 @@ function tsToDate(ts) {
 }
 
 async function getTransactionsForMonth(month) {
-  const ref = firestore.collection(COLLECTION);
+  // db is Firestore (from config/firebase)
+  const ref = db.collection(COLLECTION);
   let q = ref.orderBy("createDatetime", "desc");
   if (month) {
     const range = toMonthRange(month);
     if (range) {
-      q = q.where("createDatetime", ">=", range.start)
-           .where("createDatetime", "<", range.end);
+      q = q.where("createDatetime", ">=", range.start).where("createDatetime", "<", range.end);
     }
   }
   const snap = await q.limit(500).get();
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
+// ===== Gemini prompt builders =====
 function buildEmissionsPrompt(transactions, factors) {
   return {
     systemInstruction: `
@@ -122,8 +130,8 @@ Contextual boundaries/requirements:
 - For "Transport", assume mix of MRT (low emissions) and cars/taxis (higher emissions). Use the factor table, not external assumptions.
 - For "Travel", assume air travel in/out of Singapore is the baseline (higher impact).
 - If category is missing or unknown, default to "Others".
-- Every transaction in the list must appear in the output.
 - The emissions calculation: emissionsKg = amount * factor(category).
+- Every transaction in the list must appear in the output.
 - Always output strict JSON with "items" (list of transactions + emissionsKg) and "totals" (sum and byCategory).
 - Do not add extra commentary, only JSON.
 
@@ -147,20 +155,20 @@ Schema reminder:
 `,
     input: {
       factors,
-      transactions: transactions.map(t => ({
+      transactions: transactions.map((t) => ({
         id: t.id,
         title: t.title ?? null,
         category: t.category ?? null,
         amount: typeof t.amount === "number" ? t.amount : Number(t.amount || 0),
         createDatetime: tsToDate(t.createDatetime)?.toISOString() ?? null,
-      }))
-    }
+      })),
+    },
   };
 }
 
 function buildRecommendationsPrompt(emissionsData, predictedSpending, actualSpending, month) {
   const season = getSeasonFromMonth(month);
-  
+
   return {
     systemInstruction: `
 You are a sustainability advisor specializing in Singapore's environmental context. 
@@ -172,8 +180,8 @@ Your task:
 3. Recommend carbon handprint activities to offset emissions
 4. Consider the seasonal context (${season}) and spending patterns
 
-Carbon Handprint Actions (prioritize these for Singapore context):
-- Tree planting programs (Gardens by the Bay, NParks initiatives)
+Carbon Handprint Actions (prioritize Singapore context):
+- Tree planting programs (NParks initiatives)
 - Supporting renewable energy projects in Singapore
 - Using public transport (MRT/buses) vs private vehicles
 - Choosing local/sustainable food options
@@ -214,7 +222,7 @@ Output Format (strict JSON):
   "seasonalTips": [
     "Season-specific advice for ${season} in Singapore"
   ],
-  "spendingInsight": "Analysis comparing predicted ($${predictedSpending.toFixed(2)}) vs actual spending ($${actualSpending.toFixed(2)}) and emission implications"
+  "spendingInsight": "Analysis comparing predicted ($${predictedSpending.toFixed(2)}) vs actual ($${actualSpending.toFixed(2)}) and emission implications"
 }
 
 Important: Provide specific, actionable recommendations tailored to Singapore. 
@@ -226,32 +234,64 @@ Do not add extra commentary outside the JSON structure.
       season,
       predictedSpending,
       actualSpending,
-      emissionsData
-    }
+      emissionsData,
+    },
   };
 }
 
-async function callGemini(promptObj) {
+// ===== Gemini REST call (snake_case payload) =====
+async function callGeminiREST(promptObj) {
+  if (!GEMINI_API_KEY) {
+    throw new Error("GOOGLE_API_KEY not set");
+  }
+
   const userText = JSON.stringify(promptObj.input, null, 2);
-  const fullPrompt = `${promptObj.systemInstruction}
+  const fullPrompt = `${promptObj.systemInstruction.trim()}
 
 Data to analyse:
 ${userText}`;
 
-  const result = await model.generateContent({
+  const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(
+    GEMINI_API_KEY
+  )}`;
+
+  const body = {
     contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-    generationConfig: { temperature: 0.3, responseMimeType: "application/json" },
+    // REST requires snake_case generation_config keys
+    generation_config: {
+      temperature: 0.3,
+      response_mime_type: "application/json",
+      // max_output_tokens: 2048, // optional
+    },
+  };
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 
-  const text = result.response.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    const m = text.match(/\{[\s\S]*\}$/);
-    json = m ? JSON.parse(m[0]) : { items: [], totals: { totalEmissionsKg: 0 } };
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Gemini REST error ${resp.status}: ${text}`);
   }
-  return json;
+
+  const data = await resp.json();
+  const textOut = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+
+  // Best-effort to parse JSON output
+  try {
+    return JSON.parse(textOut);
+  } catch {
+    const m = textOut.match(/\{[\s\S]*\}$/);
+    return m ? JSON.parse(m[0]) : { items: [], totals: { totalEmissionsKg: 0, byCategory: {} } };
+  }
+}
+
+// ===== Public API =====
+function buildEmissions(transactions, factors = DEFAULT_FACTORS) {
+  const prompt = buildEmissionsPrompt(transactions, factors);
+  return callGeminiREST(prompt);
 }
 
 async function estimateEmissions({ month, factors = DEFAULT_FACTORS }) {
@@ -259,67 +299,64 @@ async function estimateEmissions({ month, factors = DEFAULT_FACTORS }) {
   if (tx.length === 0) {
     return { items: [], totals: { totalEmissionsKg: 0, byCategory: {} } };
   }
-  const prompt = buildEmissionsPrompt(tx, factors);
-  const json = await callGemini(prompt);
 
+  const json = await buildEmissions(tx, factors);
   const items = Array.isArray(json.items) ? json.items : [];
-  const totals =
-    json.totals && typeof json.totals === "object" ? json.totals : { totalEmissionsKg: 0 };
+  const totals = json.totals && typeof json.totals === "object"
+    ? json.totals
+    : { totalEmissionsKg: 0, byCategory: {} };
 
   return { items, totals, month };
 }
 
 async function getComprehensiveAnalysis({ month, factors = DEFAULT_FACTORS }) {
-  // 1. Get predicted spending based on season
+  // 1) Predicted spending
   const prediction = await predictSpending(month);
-  
-  // 2. Get actual transactions and calculate emissions
+
+  // 2) Actual transactions
   const transactions = await getTransactionsForMonth(month);
-  
   if (transactions.length === 0) {
     return {
       prediction,
       emissions: { items: [], totals: { totalEmissionsKg: 0, byCategory: {} } },
       recommendations: {
-        summary: "No transactions found for this month. Start tracking your spending to get personalized carbon footprint insights!",
+        summary:
+          "No transactions found for this month. Start tracking your spending to get personalized carbon footprint insights!",
         alternatives: [],
         handprintActions: [],
         topEmitters: [],
-        seasonalTips: []
+        seasonalTips: [],
       },
       actualSpending: 0,
       comparison: {
         predictedVsActual: -prediction.predictedSpending,
-        percentageDifference: -100
-      }
+        percentageDifference: -100,
+      },
     };
   }
 
-  // Calculate actual spending
   const actualSpending = transactions.reduce((sum, tx) => {
     const amount = typeof tx.amount === "number" ? tx.amount : Number(tx.amount || 0);
-    return sum + amount;
+    return sum + (Number.isFinite(amount) ? amount : 0);
   }, 0);
 
-  // Get emissions data
-  const emissionsPrompt = buildEmissionsPrompt(transactions, factors);
-  const emissionsData = await callGemini(emissionsPrompt);
-
+  // 3) Emissions (AI)
+  const emissionsData = await buildEmissions(transactions, factors);
   const items = Array.isArray(emissionsData.items) ? emissionsData.items : [];
-  const totals = emissionsData.totals && typeof emissionsData.totals === "object" 
-    ? emissionsData.totals 
-    : { totalEmissionsKg: 0, byCategory: {} };
-
+  const totals =
+    emissionsData.totals && typeof emissionsData.totals === "object"
+      ? emissionsData.totals
+      : { totalEmissionsKg: 0, byCategory: {} };
   const emissions = { items, totals };
 
-  // 3. Get Gemini recommendations for greener alternatives and handprint actions
-  const recommendationsPrompt = buildRecommendationsPrompt(
+  // 4) Recommendations (AI)
+  const recPrompt = buildRecommendationsPrompt(
     emissions,
     prediction.predictedSpending,
     actualSpending,
     month
   );
-  const recommendations = await callGemini(recommendationsPrompt);
+  const recommendations = await callGeminiREST(recPrompt);
 
   return {
     prediction,
@@ -328,10 +365,11 @@ async function getComprehensiveAnalysis({ month, factors = DEFAULT_FACTORS }) {
     actualSpending,
     comparison: {
       predictedVsActual: actualSpending - prediction.predictedSpending,
-      percentageDifference: prediction.predictedSpending > 0 
-        ? ((actualSpending - prediction.predictedSpending) / prediction.predictedSpending * 100).toFixed(2)
-        : 0
-    }
+      percentageDifference:
+        prediction.predictedSpending > 0
+          ? (((actualSpending - prediction.predictedSpending) / prediction.predictedSpending) * 100).toFixed(2)
+          : 0,
+    },
   };
 }
 
