@@ -1,7 +1,7 @@
 // backend/service/aiEmissions.js
 // NOTE: This version calls the Gemini REST API directly (snake_case payload)
 // and uses your Firestore via ../config/firebase.
-
+const { firestore } = require('../config/firebase');
 const { db } = require("../config/firebase");
 const fs = require("fs");
 const path = require("path");
@@ -106,7 +106,8 @@ function tsToDate(ts) {
 
 async function getTransactionsForMonth(month) {
   // db is Firestore (from config/firebase)
-  const ref = db.collection(COLLECTION);
+  // const ref = db.collection(COLLECTION);
+  firestore.collection('carbonTransactions')
   let q = ref.orderBy("createDatetime", "desc");
   if (month) {
     const range = toMonthRange(month);
