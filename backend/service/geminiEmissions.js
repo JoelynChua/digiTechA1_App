@@ -9,7 +9,7 @@ const path = require("path");
 // If you're on Node 18+/Vercel, global fetch is available. If not, uncomment:
 // const fetch = require("node-fetch");
 
-const GEMINI_API_KEY = process.env.GOOGLE_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
   // Don't throw at import-time in serverless; log and let callers handle errors.
   console.warn("[aiEmissions] GOOGLE_API_KEY is not set. AI endpoints will fail until configured.");
