@@ -258,11 +258,9 @@ ${userText}`;
 
   const body = {
     contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-    // REST requires snake_case generation_config keys
     generation_config: {
       temperature: 0.3,
-      response_mime_type: "application/json",
-      // max_output_tokens: 2048, // optional
+      max_output_tokens: 2048, // optional
     },
   };
 
@@ -280,14 +278,16 @@ ${userText}`;
   const data = await resp.json();
   const textOut = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
 
-  // Best-effort to parse JSON output
   try {
     return JSON.parse(textOut);
   } catch {
     const m = textOut.match(/\{[\s\S]*\}$/);
-    return m ? JSON.parse(m[0]) : { items: [], totals: { totalEmissionsKg: 0, byCategory: {} } };
+    return m
+      ? JSON.parse(m[0])
+      : { items: [], totals: { totalEmissionsKg: 0, byCategory: {} } };
   }
 }
+
 
 // ===== Public API =====
 function buildEmissions(transactions, factors = DEFAULT_FACTORS) {
