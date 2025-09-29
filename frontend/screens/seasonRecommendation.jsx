@@ -8,7 +8,8 @@ import {
   BarChart, Bar
 } from "recharts";
 
-const API_BASE_URL = "http://localhost:4000/api";
+// const API_BASE_URL = "http://localhost:4000/api";
+const API_BASE = "https://digi-tech-a1-app.vercel.app";
 
 export default function SeasonRecommendation() {
   const [selectedMonth, setSelectedMonth] = useState("");
