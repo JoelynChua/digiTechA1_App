@@ -107,7 +107,7 @@ function tsToDate(ts) {
 async function getTransactionsForMonth(month) {
   // db is Firestore (from config/firebase)
   // const ref = db.collection(COLLECTION);
-  firestore.collection('carbonTransactions')
+  const ref = firestore.collection('carbonTransactions');
   let q = ref.orderBy("createDatetime", "desc");
   if (month) {
     const range = toMonthRange(month);
