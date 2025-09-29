@@ -52,7 +52,7 @@ router.get('/transactions', async (req, res) => {
     }
     console.log('[/transactions GET] calling listTransactions()');
     const items = await listTransactions();
-    return res.json({ transactions: items });
+    return res.json(items);
   } catch (e) {
     console.error('[/transactions GET] FAILED:', e?.message, e?.stack);
     return res.status(500).json({ error: 'Failed to fetch transactions', detail: e?.message });
