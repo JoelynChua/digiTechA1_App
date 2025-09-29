@@ -8,7 +8,7 @@ const app = express();
 // Allow your frontend (adjust origin as needed)
 app.use(
   cors({
-     origin: ["http://localhost:5173", "http://127.0.0.1:5173", "https://digi-tech-a1-app-frontend.vercel.app"],
+     origin: ["http://localhost:5173", "http://127.0.0.1:5173", "https://digi-tech-a1-app-frontend.vercel.app",  "https://digi-tech-a1-app.vercel.app"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: false, // set true only if using cookies/auth headers that require it
