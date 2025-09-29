@@ -10,7 +10,7 @@ import {
 import NavBar from "../components/NavBar";
 
 // const API_BASE_URL = "http://localhost:4000/api";
-const API_BASE_URL = "https://digi-tech-a1-app.vercel.app";
+const API_BASE_URL = "https://digi-tech-a1-app.vercel.app/api";
 
 export default function SeasonRecommendation() {
     const [selectedMonth, setSelectedMonth] = useState("");
