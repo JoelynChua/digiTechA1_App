@@ -36,14 +36,27 @@ router.post("/transactions", async (req, res) => {
 });
 
 // List all transactions
-router.get("/transactions", async (req, res) => {
-    try {
-        const items = await listTransactions();
-        res.json(items);
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: "Failed to fetch transactions" });
+// router.get("/transactions", async (req, res) => {
+//     try {
+//         const items = await listTransactions();
+//         res.json(items);
+//     } catch (e) {
+//         console.error(e);
+//         res.status(500).json({ error: "Failed to fetch transactions" });
+//     }
+// });
+router.get('/transactions', async (req, res) => {
+  try {
+    if (String(process.env.DISABLE_DB).toLowerCase() === 'true') {
+      return res.json({ transactions: [{ id: 'demo', name: 'Mock Tx', amount: 0 }] });
     }
+    console.log('[/transactions GET] calling listTransactions()');
+    const items = await listTransactions();
+    return res.json({ transactions: items });
+  } catch (e) {
+    console.error('[/transactions GET] FAILED:', e?.message, e?.stack);
+    return res.status(500).json({ error: 'Failed to fetch transactions', detail: e?.message });
+  }
 });
 
 // Get single transaction
